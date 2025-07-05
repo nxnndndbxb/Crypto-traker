@@ -331,6 +331,24 @@
             font-family: 'Courier New', Courier, monospace; font-size: 1.1em; margin: 25px 0;
             word-wrap: break-word; text-align: center; color: var(--primary-accent); font-weight: bold;
         }
+        /* [NEW] Invited User List Styles */
+        #invited-users-list { max-height: 400px; overflow-y: auto; padding-right: 10px; }
+        .invited-user-item {
+            display: flex; align-items: center; padding: 15px; margin-bottom: 10px;
+            background-color: rgba(0,0,0,0.2); border-radius: 12px;
+            border-left: 4px solid var(--tertiary-accent);
+        }
+        .invited-user-item .icon {
+            font-size: 1.5em; width: 40px; text-align: center; margin-right: 15px;
+            color: var(--primary-accent);
+        }
+        .invited-user-item .details { flex-grow: 1; }
+        .invited-user-item .email { font-weight: 600; }
+        .invited-user-item .uid { font-size: 0.8em; color: var(--text-secondary); font-family: monospace; }
+        .invited-user-item .balance {
+            font-size: 1.1em; font-weight: 600; text-align: right;
+            color: var(--primary-accent);
+        }
 
         /* --- Modal (for Recharge/Withdraw) --- */
         .modal-overlay {
@@ -529,6 +547,14 @@
                 <div class="invite-code" id="invite-link-display">Generating...</div>
                 <button class="btn" id="copy-invite-link-btn"><span class="btn-text"><i class="fas fa-copy"></i>  Copy My Link</span></button>
             </div>
+            <!-- [NEW] Invited Users Panel -->
+            <div class="content-panel">
+                <h3>Your Referrals</h3>
+                <ul id="invited-users-list" style="list-style-type: none;">
+                    <!-- JS will populate this -->
+                    <p class="info-text" id="no-invites-msg">You haven't invited anyone yet.</p>
+                </ul>
+            </div>
         </section>
 
         <!-- Wallet Page -->
@@ -655,7 +681,6 @@
                 WITHDRAWAL_FEE_PERCENT: 0.05,
                 MIN_WITHDRAWAL_USD: 5,
                 REFERRAL_BONUS_PERCENT: 0.10,
-                // SIGNUP_BONUS_CDNC REMOVED
                 PRICE_UPDATE_INTERVAL_HOURS: 24,
                 PRICE_INCREASE_MIN_PERCENT: 0.05, // 5%
                 PRICE_INCREASE_MAX_PERCENT: 0.10, // 10%
@@ -671,6 +696,7 @@
                 countdownInterval: null,
                 userRef: null,
                 txRef: null,
+                invitesRef: null, // [NEW] listener for invites
                 preloaderTimeoutId: null,
                 ui: {},
             },
@@ -735,6 +761,9 @@
                     noTransactionsMsg: document.getElementById('no-transactions-msg'),
                     aiBotStatus: document.getElementById('ai-bot-status'),
                     aiBotCountdown: document.getElementById('ai-bot-countdown'),
+                    // [NEW] Caching invite list elements
+                    invitedUsersList: document.getElementById('invited-users-list'),
+                    noInvitesMsg: document.getElementById('no-invites-msg'),
                 };
             },
 
@@ -832,6 +861,37 @@
                 });
             },
 
+            // [NEW] Renders the list of invited users
+            updateInvitedUsersList(usersSnapshot) {
+                const { invitedUsersList, noInvitesMsg } = this.state.ui;
+                invitedUsersList.innerHTML = ''; // Clear previous list
+                
+                if (!usersSnapshot.exists() || usersSnapshot.numChildren() === 0) {
+                    invitedUsersList.innerHTML = `<p class="info-text" id="no-invites-msg">You haven't invited anyone yet.</p>`;
+                    return;
+                }
+
+                usersSnapshot.forEach(userSnap => {
+                    const userData = userSnap.val();
+                    const item = document.createElement('li');
+                    item.className = 'invited-user-item';
+
+                    // Mask email for privacy: u**@domain.com
+                    const emailParts = userData.email.split('@');
+                    const maskedEmail = `${emailParts[0].substring(0, 1)}***@${emailParts[1]}`;
+
+                    item.innerHTML = `
+                        <div class="icon"><i class="fas fa-user-check"></i></div>
+                        <div class="details">
+                            <div class="email">${maskedEmail}</div>
+                            <div class="uid">UID: ${userData.uid}</div>
+                        </div>
+                        <div class="balance">${(userData.cdnc_balance || 0).toFixed(2)} CDNC</div>
+                    `;
+                    invitedUsersList.appendChild(item);
+                });
+            },
+
             // --- [4] EVENT LISTENERS & HANDLERS ---
             bindEventListeners() {
                 document.getElementById('show-register-link').addEventListener('click', (e) => { e.preventDefault(); this.state.ui.loginPage.style.display = 'none'; this.state.ui.registerPage.style.display = 'block'; });
@@ -907,18 +967,16 @@
                     const user = userCredential.user;
                     const referralCode = 'CDNC' + Math.random().toString(36).substring(2, 8).toUpperCase();
                     
-                    // EDIT: No signup bonus. CDNC balance starts at 0.
                     await this.db.ref('users/' + user.uid).set({
                         email: user.email, 
                         uid: user.uid, 
-                        usd_balance: 0, 
-                        cdnc_balance: 0, // Changed from bonus amount to 0
+                        usd_balance: 0,
+                        cdnc_balance: 0,
                         balance_on_hold: 0,
                         referralCode: referralCode, 
                         referredBy: refCode || null,
                     });
                     
-                    // EDIT: Removed transaction log for bonus and updated toast message
                     this.showToast('Registration successful! You can now log in.', 'success');
 
                 } catch (error) {
@@ -1016,18 +1074,53 @@
                 if (!this.state.currentUser || this.state.userRef) return;
                 this.state.userRef = this.db.ref('users/' + this.state.currentUser.uid);
                 this.state.txRef = this.db.ref('transactions/' + this.state.currentUser.uid);
+                
                 this.state.userRef.on('value', (snapshot) => {
                     this.hidePreloader();
                     const oldUserData = { ...this.state.userData };
                     this.state.userData = snapshot.val();
-                    if (this.state.userData) this.updateUI(oldUserData);
-                    else this.auth.signOut();
+                    if (this.state.userData) {
+                        this.updateUI(oldUserData);
+                        this.listenToInvites(); // [NEW] Start listening for invites once user data is loaded
+                    } else {
+                        this.auth.signOut();
+                    }
                 }, (error) => { console.error("Firebase user data listener error:", error); this.showToast("Could not sync user data.", "danger"); });
+
                 this.state.txRef.on('value', (snapshot) => this.updateTransactionHistory(snapshot.val()));
             },
 
+            // [NEW] Listener for invited users
+            listenToInvites() {
+                if (this.state.invitesRef) {
+                    this.state.invitesRef.off(); // Detach old listener if it exists
+                }
+                if (!this.state.userData || !this.state.userData.referralCode) return;
+
+                // Query for users whose 'referredBy' field matches the current user's referral code
+                this.state.invitesRef = this.db.ref('users').orderByChild('referredBy').equalTo(this.state.userData.referralCode);
+                this.state.invitesRef.on('value', (snapshot) => {
+                    this.updateInvitedUsersList(snapshot);
+                }, (error) => {
+                    console.error("Firebase invites listener error:", error);
+                    this.showToast("Could not sync referral data.", "danger");
+                });
+            },
+
             listenToMarketData() { if (this.state.marketDataRef) return; this.state.marketDataRef = this.db.ref('market_data'); this.state.marketDataRef.on('value', async (snapshot) => { if (!snapshot.exists()) { await this.state.marketDataRef.set({ currentPrice: 1.25, lastUpdate: firebase.database.ServerValue.TIMESTAMP }); return; } const data = snapshot.val(); this.state.coinPrice = data.currentPrice; this.updateStaticPriceUI(); this.startCountdown(data.lastUpdate); const timeSinceUpdate = Date.now() - data.lastUpdate; const updateIntervalMs = this.config.PRICE_UPDATE_INTERVAL_HOURS * 60 * 60 * 1000; if (timeSinceUpdate > updateIntervalMs) { this.state.ui.aiBotStatus.textContent = "Updating Price..."; await this.triggerPriceUpdate(data.currentPrice); } else { this.state.ui.aiBotStatus.textContent = "Next update in:"; } }); },
-            stopAllListeners() { if (this.state.userRef) this.state.userRef.off(); if (this.state.txRef) this.state.txRef.off(); if (this.state.marketDataRef) this.state.marketDataRef.off(); if (this.state.countdownInterval) clearInterval(this.state.countdownInterval); this.state.userRef = null; this.state.txRef = null; this.state.marketDataRef = null; this.state.countdownInterval = null; },
+            stopAllListeners() { 
+                if (this.state.userRef) this.state.userRef.off(); 
+                if (this.state.txRef) this.state.txRef.off(); 
+                if (this.state.marketDataRef) this.state.marketDataRef.off(); 
+                if (this.state.invitesRef) this.state.invitesRef.off(); // [NEW] Stop listening for invites
+                if (this.state.countdownInterval) clearInterval(this.state.countdownInterval); 
+                
+                this.state.userRef = null; 
+                this.state.txRef = null; 
+                this.state.marketDataRef = null; 
+                this.state.invitesRef = null; // [NEW] Reset invite listener state
+                this.state.countdownInterval = null; 
+            },
 
             // --- [7] HELPERS & UTILITIES ---
             startCountdown(lastUpdateTimestamp) { if (this.state.countdownInterval) clearInterval(this.state.countdownInterval); const updateIntervalMs = this.config.PRICE_UPDATE_INTERVAL_HOURS * 60 * 60 * 1000; const nextUpdateTime = lastUpdateTimestamp + updateIntervalMs; this.state.countdownInterval = setInterval(() => { const remainingMs = nextUpdateTime - Date.now(); if (remainingMs <= 0) { this.state.ui.aiBotCountdown.textContent = "00:00:00"; return; } const hours = Math.floor((remainingMs / (1000 * 60 * 60)) % 24).toString().padStart(2, '0'); const minutes = Math.floor((remainingMs / (1000 * 60)) % 60).toString().padStart(2, '0'); const seconds = Math.floor((remainingMs / 1000) % 60).toString().padStart(2, '0'); this.state.ui.aiBotCountdown.textContent = `${hours}:${minutes}:${seconds}`; }, 1000); },
