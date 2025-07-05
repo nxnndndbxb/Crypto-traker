@@ -211,7 +211,6 @@
         .header-welcome h2 { font-size: 2.2em; font-weight: 700; line-height: 1.2; }
         .header-welcome p { color: var(--text-secondary); font-weight: 300; font-size: 1.1em; }
 
-        /* --- EDIT: AI Bot Ticker (small) --- */
         .ai-bot-ticker {
             display: flex; align-items: center; justify-content: center; gap: 15px;
             background: rgba(0,0,0,0.25); border-radius: 12px;
@@ -223,7 +222,6 @@
         .ai-bot-ticker .status { color: var(--text-secondary); }
         .ai-bot-ticker .countdown { font-family: 'Courier New', monospace; font-weight: bold; color: var(--tertiary-accent); }
 
-        /* --- EDIT: Large Coin --- */
         .coin-wrapper { 
             perspective: 3000px;
             margin-bottom: 40px;
@@ -257,8 +255,8 @@
             content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; border-radius: 50%;
             background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 50%);
         }
-        .front { transform: translateZ(15px); } /* EDIT: increased thickness */
-        .back { transform: rotateY(180deg) translateZ(15px); } /* EDIT: increased thickness */
+        .front { transform: translateZ(15px); }
+        .back { transform: rotateY(180deg) translateZ(15px); }
         .coin-edge { background: linear-gradient(to right, #2a2d46, #4c507c, #2a2d46); transform: translateZ(0); }
         @keyframes spin { from { transform: rotateY(0deg); } to { transform: rotateY(360deg); } }
 
@@ -462,14 +460,12 @@
                 <p>Your cosmic journey starts here.</p>
             </header>
 
-            <!-- EDIT: New AI Bot Ticker -->
             <div class="ai-bot-ticker">
                 <div class="icon"><i class="fas fa-robot"></i></div>
                 <div class="status" id="ai-bot-status">Initializing AI...</div>
                 <div class="countdown" id="ai-bot-countdown">--:--:--</div>
             </div>
 
-            <!-- EDIT: Enlarged Coin -->
             <div class="coin-wrapper">
                 <div class="coin-container" id="interactive-coin-container">
                     <div class="coin-aura"></div>
@@ -543,7 +539,6 @@
                     <span class="amount" id="wallet-usd-balance">$0.00</span>
                     <span class="currency">Available USD Balance</span>
                 </div>
-                <!-- EDIT: Added display for funds on hold -->
                 <div class="balance-on-hold" id="wallet-on-hold-balance">On Hold for Withdrawal: $0.00</div>
                 <div class="wallet-actions">
                     <button class="btn btn-buy" id="recharge-btn-modal"><i class="fas fa-plus-circle"></i>  Recharge</button>
@@ -660,7 +655,7 @@
                 WITHDRAWAL_FEE_PERCENT: 0.05,
                 MIN_WITHDRAWAL_USD: 5,
                 REFERRAL_BONUS_PERCENT: 0.10,
-                SIGNUP_BONUS_CDNC: 100,
+                // SIGNUP_BONUS_CDNC REMOVED
                 PRICE_UPDATE_INTERVAL_HOURS: 24,
                 PRICE_INCREASE_MIN_PERCENT: 0.05, // 5%
                 PRICE_INCREASE_MAX_PERCENT: 0.10, // 10%
@@ -731,7 +726,7 @@
                     tradeUsdBalance: document.getElementById('trade-usd-balance'),
                     tradeCdncBalance: document.getElementById('trade-cdnc-balance'),
                     walletUsdBalance: document.getElementById('wallet-usd-balance'),
-                    walletOnHoldBalance: document.getElementById('wallet-on-hold-balance'), // EDIT: new UI element
+                    walletOnHoldBalance: document.getElementById('wallet-on-hold-balance'),
                     inviteLinkDisplay: document.getElementById('invite-link-display'),
                     profileEmail: document.getElementById('profile-email'),
                     profileUid: document.getElementById('profile-uid'),
@@ -790,21 +785,17 @@
             updateUI(oldData = {}) {
                 if (!this.state.userData) return;
                 const { usd_balance = 0, cdnc_balance = 0, balance_on_hold = 0, email, uid, referralCode } = this.state.userData;
-                const oldUsd = oldData.usd_balance || 0;
-                const oldCdnc = oldData.cdnc_balance || 0;
                 const holdingsValue = cdnc_balance * this.state.coinPrice;
 
                 const formatCurrency = (num) => `$${Number(num || 0).toFixed(2)}`;
                 const formatToken = (num) => Number(num || 0).toFixed(2);
                 
-                // Animate values if needed, for now using direct assignment
                 this.state.ui.welcomeUser.textContent = `Welcome, ${email.split('@')[0]}`;
                 this.state.ui.homeUsdBalance.textContent = formatCurrency(usd_balance);
                 this.state.ui.homeCdncBalance.textContent = formatToken(cdnc_balance);
                 this.state.ui.tradeCdncBalance.textContent = formatToken(cdnc_balance);
                 this.state.ui.walletUsdBalance.textContent = formatCurrency(usd_balance);
                 this.state.ui.walletOnHoldBalance.textContent = `On Hold for Withdrawal: ${formatCurrency(balance_on_hold)}`;
-
                 this.state.ui.homeHoldingsValue.innerText = formatCurrency(holdingsValue);
                 this.state.ui.tradeUsdBalance.innerText = formatCurrency(usd_balance);
                 this.state.ui.inviteLinkDisplay.innerText = `${window.location.origin}${window.location.pathname}?ref=${referralCode}`;
@@ -915,17 +906,21 @@
                     const userCredential = await this.auth.createUserWithEmailAndPassword(email, password);
                     const user = userCredential.user;
                     const referralCode = 'CDNC' + Math.random().toString(36).substring(2, 8).toUpperCase();
-                    const signupBonus = this.config.SIGNUP_BONUS_CDNC;
+                    
+                    // EDIT: No signup bonus. CDNC balance starts at 0.
                     await this.db.ref('users/' + user.uid).set({
-                        email: user.email, uid: user.uid, 
+                        email: user.email, 
+                        uid: user.uid, 
                         usd_balance: 0, 
-                        cdnc_balance: signupBonus,
-                        balance_on_hold: 0, // EDIT: Initialize hold balance
+                        cdnc_balance: 0, // Changed from bonus amount to 0
+                        balance_on_hold: 0,
                         referralCode: referralCode, 
                         referredBy: refCode || null,
                     });
-                    await this.logTransaction('bonus', signupBonus, { reason: 'Sign-up Bonus' });
-                    this.showToast(`Registration successful! You received ${signupBonus} CDNC bonus.`, 'success');
+                    
+                    // EDIT: Removed transaction log for bonus and updated toast message
+                    this.showToast('Registration successful! You can now log in.', 'success');
+
                 } catch (error) {
                     this.showToast(error.message, 'danger');
                 } finally {
@@ -933,9 +928,9 @@
                 }
             },
 
-            async handleLogin(e) { /* No changes needed */ e.preventDefault(); const btn = e.target.querySelector('button'); this.setButtonLoading(btn, true); const email = document.getElementById('login-email').value; const password = document.getElementById('login-password').value; try { await this.auth.signInWithEmailAndPassword(email, password); } catch (error) { this.showToast(error.message, 'danger'); } finally { this.setButtonLoading(btn, false); } },
-            async handleLogout(e) { /* No changes needed */ const btn = e.currentTarget; this.setButtonLoading(btn, true); try { await this.auth.signOut(); } catch (error) { this.showToast(error.message, 'danger'); } finally { this.setButtonLoading(btn, false); } },
-            async handleTrade(type, e) { /* No changes needed */ const btn = e.currentTarget; const amountInput = document.getElementById('trade-amount'); const amount = parseFloat(amountInput.value); if (isNaN(amount) || amount <= 0) { return this.showToast('Please enter a valid positive amount.', 'danger'); } this.setButtonLoading(btn, true); const { usd_balance, cdnc_balance } = this.state.userData; const price = this.state.coinPrice; try { if (type === 'buy') { const cost = amount * price; if (usd_balance < cost) throw new Error('Insufficient USD balance.'); await this.db.ref('users/' + this.state.currentUser.uid).update({ usd_balance: usd_balance - cost, cdnc_balance: cdnc_balance + amount }); await this.logTransaction('buy', amount, { price }); this.showToast(`Successfully bought ${amount.toFixed(2)} CDNC!`, 'success'); } else if (type === 'sell') { if (cdnc_balance < amount) throw new Error('Insufficient CDNC balance.'); const gain = amount * price; await this.db.ref('users/' + this.state.currentUser.uid).update({ usd_balance: usd_balance + gain, cdnc_balance: cdnc_balance - amount }); await this.logTransaction('sell', amount, { price }); this.showToast(`Successfully sold ${amount.toFixed(2)} CDNC!`, 'success'); } amountInput.value = ''; } catch (err) { this.showToast(err.message, 'danger'); } finally { this.setButtonLoading(btn, false); } },
+            async handleLogin(e) { e.preventDefault(); const btn = e.target.querySelector('button'); this.setButtonLoading(btn, true); const email = document.getElementById('login-email').value; const password = document.getElementById('login-password').value; try { await this.auth.signInWithEmailAndPassword(email, password); } catch (error) { this.showToast(error.message, 'danger'); } finally { this.setButtonLoading(btn, false); } },
+            async handleLogout(e) { const btn = e.currentTarget; this.setButtonLoading(btn, true); try { await this.auth.signOut(); } catch (error) { this.showToast(error.message, 'danger'); } finally { this.setButtonLoading(btn, false); } },
+            async handleTrade(type, e) { const btn = e.currentTarget; const amountInput = document.getElementById('trade-amount'); const amount = parseFloat(amountInput.value); if (isNaN(amount) || amount <= 0) { return this.showToast('Please enter a valid positive amount.', 'danger'); } this.setButtonLoading(btn, true); const { usd_balance, cdnc_balance } = this.state.userData; const price = this.state.coinPrice; try { if (type === 'buy') { const cost = amount * price; if (usd_balance < cost) throw new Error('Insufficient USD balance.'); await this.db.ref('users/' + this.state.currentUser.uid).update({ usd_balance: usd_balance - cost, cdnc_balance: cdnc_balance + amount }); await this.logTransaction('buy', amount, { price }); this.showToast(`Successfully bought ${amount.toFixed(2)} CDNC!`, 'success'); } else if (type === 'sell') { if (cdnc_balance < amount) throw new Error('Insufficient CDNC balance.'); const gain = amount * price; await this.db.ref('users/' + this.state.currentUser.uid).update({ usd_balance: usd_balance + gain, cdnc_balance: cdnc_balance - amount }); await this.logTransaction('sell', amount, { price }); this.showToast(`Successfully sold ${amount.toFixed(2)} CDNC!`, 'success'); } amountInput.value = ''; } catch (err) { this.showToast(err.message, 'danger'); } finally { this.setButtonLoading(btn, false); } },
 
             async handleRecharge(e) {
                 e.preventDefault();
@@ -947,7 +942,6 @@
                 const network = document.querySelector('#recharge-modal .option-btn.active').dataset.network;
                 
                 try {
-                    // EDIT: Create a request instead of updating balance
                     await this.db.ref('recharge_requests').push({
                         userId: this.state.currentUser.uid,
                         userEmail: this.state.currentUser.email,
@@ -977,14 +971,12 @@
                 const network = document.getElementById('withdraw-network').value;
                 if (isNaN(amount) || amount < this.config.MIN_WITHDRAWAL_USD || !address) return this.showToast('Please fill all fields with valid information.', 'danger');
 
-                // EDIT: Check available balance, not total
                 if (this.state.userData.usd_balance < amount) return this.showToast(`Insufficient available balance. You need $${amount.toFixed(2)}.`, 'danger');
 
                 this.setButtonLoading(btn, true);
                 const fee = amount * this.config.WITHDRAWAL_FEE_PERCENT;
 
                 try {
-                    // EDIT: Move funds to 'on hold' instead of deducting
                     await this.db.ref('users/' + this.state.currentUser.uid).update({ 
                         usd_balance: firebase.database.ServerValue.increment(-amount),
                         balance_on_hold: firebase.database.ServerValue.increment(amount)
@@ -1007,7 +999,6 @@
                     this.hideModal('withdrawal-modal');
                 } catch (err) {
                     this.showToast(`Withdrawal failed: ${err.message}`, 'danger');
-                    // Revert the hold if the request fails
                     await this.db.ref('users/' + this.state.currentUser.uid).update({ 
                         usd_balance: firebase.database.ServerValue.increment(amount),
                         balance_on_hold: firebase.database.ServerValue.increment(-amount)
@@ -1017,7 +1008,7 @@
                 }
             },
             
-            async triggerPriceUpdate(currentPrice) { /* No changes needed */ const { PRICE_INCREASE_MIN_PERCENT, PRICE_INCREASE_MAX_PERCENT } = this.config; const increasePercent = Math.random() * (PRICE_INCREASE_MAX_PERCENT - PRICE_INCREASE_MIN_PERCENT) + PRICE_INCREASE_MIN_PERCENT; const newPrice = currentPrice * (1 + increasePercent); await this.db.ref('market_data').set({ currentPrice: newPrice, lastUpdate: firebase.database.ServerValue.TIMESTAMP }); this.showToast(`AI Bot Updated Price! New Price: $${newPrice.toFixed(4)}`, 'success'); },
+            async triggerPriceUpdate(currentPrice) { const { PRICE_INCREASE_MIN_PERCENT, PRICE_INCREASE_MAX_PERCENT } = this.config; const increasePercent = Math.random() * (PRICE_INCREASE_MAX_PERCENT - PRICE_INCREASE_MIN_PERCENT) + PRICE_INCREASE_MIN_PERCENT; const newPrice = currentPrice * (1 + increasePercent); await this.db.ref('market_data').set({ currentPrice: newPrice, lastUpdate: firebase.database.ServerValue.TIMESTAMP }); this.showToast(`AI Bot Updated Price! New Price: $${newPrice.toFixed(4)}`, 'success'); },
             async logTransaction(type, amount, details = {}) { if(!this.state.currentUser) return; const txData = { type, amount, details, timestamp: firebase.database.ServerValue.TIMESTAMP }; await this.db.ref(`transactions/${this.state.currentUser.uid}`).push(txData); },
 
             // --- [6] DATA LISTENERS ---
