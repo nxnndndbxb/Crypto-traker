@@ -303,12 +303,12 @@
             transition: all 0.3s ease-in-out;
         }
         .transaction-item.buy, .transaction-item.deposit-approved { border-left-color: var(--success-color); }
-        .transaction-item.sell, .transaction-item.withdrawal { border-left-color: var(--danger-color); }
+        .transaction-item.sell, .transaction-item.withdrawal-approved { border-left-color: var(--danger-color); }
         .transaction-item.bonus { border-left-color: var(--tertiary-accent); }
         .transaction-item.deposit-pending, .transaction-item.withdrawal-pending { border-left-color: var(--warning-color); opacity: 0.8; }
         .transaction-item .icon { font-size: 1.5em; width: 40px; text-align: center; margin-right: 15px; }
         .transaction-item.buy .icon, .transaction-item.deposit-approved .icon { color: var(--success-color); }
-        .transaction-item.sell .icon, .transaction-item.withdrawal .icon { color: var(--danger-color); }
+        .transaction-item.sell .icon, .transaction-item.withdrawal-approved .icon { color: var(--danger-color); }
         .transaction-item.bonus .icon { color: var(--tertiary-accent); }
         .transaction-item.deposit-pending .icon, .transaction-item.withdrawal-pending .icon { color: var(--warning-color); }
         .transaction-item .details { flex-grow: 1; }
@@ -670,20 +670,21 @@
             config: {
                 firebase: {
                     // WARNING: Replace with your actual Firebase config.
-                    apiKey: "AIzaSyCL-Sx0C3O3yDv1fxsIbq8Fb9cw04oEfNM",
-                    authDomain: "airdrop-f68c4.firebaseapp.com",
-                    databaseURL: "https://airdrop-f68c4-default-rtdb.asia-southeast1.firebasedatabase.app/",
-                    projectId: "airdrop-f68c4",
-                    storageBucket: "airdrop-f68c4.appspot.com",
-                    messagingSenderId: "931221762140",
-                    appId: "1:931221762140:web:48d085601d9dfd7b425556"
+                    apiKey: "YOUR_API_KEY",
+                    authDomain: "YOUR_AUTH_DOMAIN",
+                    databaseURL: "YOUR_DATABASE_URL",
+                    projectId: "YOUR_PROJECT_ID",
+                    storageBucket: "YOUR_STORAGE_BUCKET",
+                    messagingSenderId: "YOUR_SENDER_ID",
+                    appId: "YOUR_APP_ID"
                 },
                 WITHDRAWAL_FEE_PERCENT: 0.05,
                 MIN_WITHDRAWAL_USD: 5,
                 PRICE_UPDATE_INTERVAL_HOURS: 24,
                 PRICE_INCREASE_MIN_PERCENT: 0.05, // 5%
                 PRICE_INCREASE_MAX_PERCENT: 0.10, // 10%
-                PRELOADER_TIMEOUT: 8000
+                PRELOADER_TIMEOUT: 8000,
+                SIMULATED_APPROVAL_DELAY_MS: 5000 // 5 seconds
             },
             
             // --- [2] STATE MANAGEMENT ---
@@ -715,7 +716,17 @@
 
             initFirebase() {
                 try {
-                    firebase.initializeApp(this.config.firebase);
+                    // NOTE: Use your actual Firebase config from the console
+                    const firebaseConfig = {
+                        apiKey: "AIzaSyCL-Sx0C3O3yDv1fxsIbq8Fb9cw04oEfNM",
+                        authDomain: "airdrop-f68c4.firebaseapp.com",
+                        databaseURL: "https://airdrop-f68c4-default-rtdb.asia-southeast1.firebasedatabase.app/",
+                        projectId: "airdrop-f68c4",
+                        storageBucket: "airdrop-f68c4.appspot.com",
+                        messagingSenderId: "931221762140",
+                        appId: "1:931221762140:web:48d085601d9dfd7b425556"
+                    };
+                    firebase.initializeApp(firebaseConfig);
                     this.auth = firebase.auth();
                     this.db = firebase.database();
                 } catch (error) {
@@ -992,18 +1003,20 @@
             async handleLogout(e) { const btn = e.currentTarget; this.setButtonLoading(btn, true); try { await this.auth.signOut(); } catch (error) { this.showToast(error.message, 'danger'); } finally { this.setButtonLoading(btn, false); } },
             async handleTrade(type, e) { const btn = e.currentTarget; const amountInput = document.getElementById('trade-amount'); const amount = parseFloat(amountInput.value); if (isNaN(amount) || amount <= 0) { return this.showToast('Please enter a valid positive amount.', 'danger'); } this.setButtonLoading(btn, true); const { usd_balance, cdnc_balance } = this.state.userData; const price = this.state.coinPrice; try { if (type === 'buy') { const cost = amount * price; if (usd_balance < cost) throw new Error('Insufficient USD balance.'); await this.db.ref('users/' + this.state.currentUser.uid).update({ usd_balance: usd_balance - cost, cdnc_balance: cdnc_balance + amount }); await this.logTransaction('buy', amount, { price }); this.showToast(`Successfully bought ${amount.toFixed(2)} CDNC!`, 'success'); } else if (type === 'sell') { if (cdnc_balance < amount) throw new Error('Insufficient CDNC balance.'); const gain = amount * price; await this.db.ref('users/' + this.state.currentUser.uid).update({ usd_balance: usd_balance + gain, cdnc_balance: cdnc_balance - amount }); await this.logTransaction('sell', amount, { price }); this.showToast(`Successfully sold ${amount.toFixed(2)} CDNC!`, 'success'); } amountInput.value = ''; } catch (err) { this.showToast(err.message, 'danger'); } finally { this.setButtonLoading(btn, false); } },
 
-            // --- [MODIFIED] RECHARGE SYSTEM ---
+            // --- [UPDATED] RECHARGE SYSTEM WITH PENDING/APPROVAL FLOW ---
             async handleRecharge(e) {
                 e.preventDefault();
                 const btn = e.currentTarget.querySelector('button');
                 const txId = document.getElementById('transaction-id').value.trim();
                 const amount = parseFloat(document.getElementById('recharge-amount').value);
                 if (!txId || isNaN(amount) || amount <= 0) return this.showToast('Please provide a valid amount and Transaction ID.', 'danger');
+                
                 this.setButtonLoading(btn, true);
                 const network = document.querySelector('#recharge-modal .option-btn.active').dataset.network;
 
                 try {
-                    // 1. Create the main recharge request for admins to see
+                    // 1. Create the main recharge request for admins to see.
+                    // The user's balance is NOT touched here.
                     const requestRef = this.db.ref('recharge_requests').push();
                     await requestRef.set({
                         userId: this.state.currentUser.uid,
@@ -1015,21 +1028,21 @@
                         timestamp: firebase.database.ServerValue.TIMESTAMP
                     });
 
-                    // 2. Log the transaction in the user's history as 'pending'
+                    // 2. Log the transaction in the user's history as 'pending'.
                     const txLogRef = await this.logTransaction('deposit', amount, {
                         requestKey: requestRef.key,
                         network,
                         txId,
                         status: 'pending',
-                        reason: 'Deposit (Pending)'
+                        reason: 'Deposit (Pending Review)'
                     });
                     
-                    this.showToast(`Recharge for $${amount.toFixed(2)} submitted! Awaiting approval.`, 'success');
+                    this.showToast(`Recharge for $${amount.toFixed(2)} submitted! Awaiting admin approval.`, 'success');
                     this.state.ui.rechargeForm.reset();
                     this.hideModal('recharge-modal');
                     
-                    // 3. Simulate the admin approval process
-                    this.simulateApproval(requestRef.key, txLogRef.key, this.state.currentUser.uid, amount);
+                    // 3. Simulate the admin approval process for demonstration.
+                    this.simulateAdminApproval(requestRef.key, txLogRef.key, this.state.currentUser.uid, amount);
 
                 } catch (err) {
                     this.showToast(`Request failed: ${err.message}`, 'danger');
@@ -1038,35 +1051,40 @@
                 }
             },
 
-            // --- [MODIFIED] SIMULATED ADMIN APPROVAL ---
-            // In a real app, this logic would live in a secure backend environment (e.g., Firebase Cloud Function).
-            simulateApproval(requestKey, txLogKey, userId, amount) {
-                console.log(`Simulating admin approval for request ${requestKey}. This will process in 5 seconds.`);
+            // --- [NEW] SIMULATED ADMIN APPROVAL ---
+            // In a real application, this logic would live in a secure backend environment (e.g., Firebase Cloud Function)
+            // and be triggered by an admin action in a separate control panel.
+            simulateAdminApproval(requestKey, txLogKey, userId, amount) {
+                console.log(`Simulating admin approval for request ${requestKey}. This will process in ${this.config.SIMULATED_APPROVAL_DELAY_MS / 1000} seconds.`);
 
                 setTimeout(async () => {
                     try {
                         // 1. **CRITICAL:** Update the user's balance ONLY upon approval.
+                        // We use ServerValue.increment for safe concurrent updates.
                         await this.db.ref(`users/${userId}`).update({
                             usd_balance: firebase.database.ServerValue.increment(amount)
                         });
 
-                        // 2. Update the user's transaction log to show "approved"
+                        // 2. Update the user's transaction log to show "approved".
                         await this.db.ref(`transactions/${userId}/${txLogKey}/details`).update({
                             status: 'approved',
                             reason: 'Deposit (Approved)'
                         });
                         
-                        // 3. Update the original request status for admin tracking
+                        // 3. Update the original request status for admin tracking.
                         await this.db.ref(`recharge_requests/${requestKey}`).update({ status: 'approved' });
 
+                        // 4. Notify the user of the successful deposit.
                         this.showToast(`Your deposit of $${amount.toFixed(2)} was successfully approved and credited!`, 'success');
 
                     } catch (error) {
                         console.error("Error during simulated approval:", error);
-                        // In a real scenario, you would need robust error handling here.
+                        // In a real scenario, you would need robust error handling and potentially
+                        // mark the request as 'failed' in the database.
                         this.showToast("An error occurred during deposit approval.", "danger");
+                        await this.db.ref(`recharge_requests/${requestKey}`).update({ status: 'failed', error: error.message });
                     }
-                }, 5000); // 5-second delay to simulate review time
+                }, this.config.SIMULATED_APPROVAL_DELAY_MS); 
             },
 
             async handleWithdraw(e) {
@@ -1077,13 +1095,18 @@
                 const network = document.getElementById('withdraw-network').value;
                 if (isNaN(amount) || amount < this.config.MIN_WITHDRAWAL_USD || !address) return this.showToast('Please fill all fields with valid information.', 'danger');
                 if (this.state.userData.usd_balance < amount) return this.showToast(`Insufficient available balance. You need $${amount.toFixed(2)}.`, 'danger');
+                
                 this.setButtonLoading(btn, true);
                 const fee = amount * this.config.WITHDRAWAL_FEE_PERCENT;
+                
                 try {
+                    // Move funds from available to 'on hold'
                     await this.db.ref('users/' + this.state.currentUser.uid).update({ 
                         usd_balance: firebase.database.ServerValue.increment(-amount),
                         balance_on_hold: firebase.database.ServerValue.increment(amount)
                     });
+                    
+                    // Create a request for admin review
                     await this.db.ref('withdrawal_requests').push({ 
                         userId: this.state.currentUser.uid,
                         userEmail: this.state.currentUser.email,
@@ -1094,7 +1117,10 @@
                         status: 'pending',
                         timestamp: firebase.database.ServerValue.TIMESTAMP
                     });
+                    
+                    // Log the pending transaction for the user
                     await this.logTransaction('withdrawal', amount, { network, address, fee, status: 'pending', reason: 'Withdrawal (Pending)' });
+                    
                     this.showToast('Withdrawal request submitted for review!', 'success');
                     this.state.ui.withdrawalForm.reset();
                     this.hideModal('withdrawal-modal');
@@ -1105,7 +1131,9 @@
                         usd_balance: firebase.database.ServerValue.increment(amount),
                         balance_on_hold: firebase.database.ServerValue.increment(-amount)
                     });
-                } finally { this.setButtonLoading(btn, false); }
+                } finally { 
+                    this.setButtonLoading(btn, false); 
+                }
             },
             
             async triggerPriceUpdate(currentPrice) { const { PRICE_INCREASE_MIN_PERCENT, PRICE_INCREASE_MAX_PERCENT } = this.config; const increasePercent = Math.random() * (PRICE_INCREASE_MAX_PERCENT - PRICE_INCREASE_MIN_PERCENT) + PRICE_INCREASE_MIN_PERCENT; const newPrice = currentPrice * (1 + increasePercent); await this.db.ref('market_data').set({ currentPrice: newPrice, lastUpdate: firebase.database.ServerValue.TIMESTAMP }); this.showToast(`AI Bot Updated Price! New Price: $${newPrice.toFixed(4)}`, 'success'); },
@@ -1114,7 +1142,7 @@
                 const userId = forUserId || this.state.currentUser?.uid;
                 if (!userId) return null;
                 const txData = { type, amount, details, timestamp: firebase.database.ServerValue.TIMESTAMP };
-                // Return the reference so we can get the key
+                // Return the reference so we can get its unique key later
                 return await this.db.ref(`transactions/${userId}`).push(txData);
             },
 
@@ -1152,19 +1180,7 @@
             },
 
             listenToMarketData() { if (this.state.marketDataRef) return; this.state.marketDataRef = this.db.ref('market_data'); this.state.marketDataRef.on('value', async (snapshot) => { if (!snapshot.exists()) { await this.state.marketDataRef.set({ currentPrice: 1.25, lastUpdate: firebase.database.ServerValue.TIMESTAMP }); return; } const data = snapshot.val(); this.state.coinPrice = data.currentPrice; this.updateStaticPriceUI(); this.startCountdown(data.lastUpdate); const timeSinceUpdate = Date.now() - data.lastUpdate; const updateIntervalMs = this.config.PRICE_UPDATE_INTERVAL_HOURS * 60 * 60 * 1000; if (timeSinceUpdate > updateIntervalMs) { this.state.ui.aiBotStatus.textContent = "Updating Price..."; await this.triggerPriceUpdate(data.currentPrice); } else { this.state.ui.aiBotStatus.textContent = "Next update in:"; } }); },
-            stopAllListeners() { 
-                if (this.state.userRef) this.state.userRef.off(); 
-                if (this.state.txRef) this.state.txRef.off(); 
-                if (this.state.marketDataRef) this.state.marketDataRef.off(); 
-                if (this.state.invitesRef) this.state.invitesRef.off(); 
-                if (this.state.countdownInterval) clearInterval(this.state.countdownInterval); 
-                
-                this.state.userRef = null; 
-                this.state.txRef = null; 
-                this.state.marketDataRef = null; 
-                this.state.invitesRef = null; 
-                this.state.countdownInterval = null; 
-            },
+            stopAllListeners() { if (this.state.userRef) this.state.userRef.off(); if (this.state.txRef) this.state.txRef.off(); if (this.state.marketDataRef) this.state.marketDataRef.off(); if (this.state.invitesRef) this.state.invitesRef.off(); if (this.state.countdownInterval) clearInterval(this.state.countdownInterval); this.state.userRef = null; this.state.txRef = null; this.state.marketDataRef = null; this.state.invitesRef = null; this.state.countdownInterval = null; },
 
             // --- [7] HELPERS & UTILITIES ---
             startCountdown(lastUpdateTimestamp) { if (this.state.countdownInterval) clearInterval(this.state.countdownInterval); const updateIntervalMs = this.config.PRICE_UPDATE_INTERVAL_HOURS * 60 * 60 * 1000; const nextUpdateTime = lastUpdateTimestamp + updateIntervalMs; this.state.countdownInterval = setInterval(() => { const remainingMs = nextUpdateTime - Date.now(); if (remainingMs <= 0) { this.state.ui.aiBotCountdown.textContent = "00:00:00"; return; } const hours = Math.floor((remainingMs / (1000 * 60 * 60)) % 24).toString().padStart(2, '0'); const minutes = Math.floor((remainingMs / (1000 * 60)) % 60).toString().padStart(2, '0'); const seconds = Math.floor((remainingMs / 1000) % 60).toString().padStart(2, '0'); this.state.ui.aiBotCountdown.textContent = `${hours}:${minutes}:${seconds}`; }, 1000); },
