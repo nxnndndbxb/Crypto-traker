@@ -303,10 +303,12 @@
         }
         .transaction-item.buy, .transaction-item.deposit { border-left-color: var(--success-color); }
         .transaction-item.sell, .transaction-item.withdrawal { border-left-color: var(--danger-color); }
+        .transaction-item.bonus { border-left-color: var(--tertiary-accent); }
         .transaction-item.pending { border-left-color: var(--warning-color); opacity: 0.8; }
         .transaction-item .icon { font-size: 1.5em; width: 40px; text-align: center; margin-right: 15px; }
         .transaction-item.buy .icon, .transaction-item.deposit .icon { color: var(--success-color); }
         .transaction-item.sell .icon, .transaction-item.withdrawal .icon { color: var(--danger-color); }
+        .transaction-item.bonus .icon { color: var(--tertiary-accent); }
         .transaction-item.pending .icon { color: var(--warning-color); }
         .transaction-item .details { flex-grow: 1; }
         .transaction-item .type { font-weight: 600; text-transform: capitalize; }
@@ -331,7 +333,6 @@
             font-family: 'Courier New', Courier, monospace; font-size: 1.1em; margin: 25px 0;
             word-wrap: break-word; text-align: center; color: var(--primary-accent); font-weight: bold;
         }
-        /* [NEW] Invited User List Styles */
         #invited-users-list { max-height: 400px; overflow-y: auto; padding-right: 10px; }
         .invited-user-item {
             display: flex; align-items: center; padding: 15px; margin-bottom: 10px;
@@ -540,18 +541,27 @@
         <!-- Invite Page -->
         <section id="invite-page" class="page">
              <div class="content-panel invite-box">
-                <h3>Invite & Earn 10%</h3>
+                <h3>Invite & Earn 50%</h3>
                 <div class="icon"><i class="fas fa-users-rays"></i></div>
-                <p>Share your unique link. When your friend makes their first deposit and it's approved, you'll receive a 10% bonus of their deposited amount directly into your wallet!</p>
+                <p>Share your unique link. When your friend makes their <strong>first approved deposit</strong>, you'll receive a <strong>50% bonus</strong> of their deposited amount directly into your wallet!</p>
                 <p class="info-text">Your Invitation Link:</p>
                 <div class="invite-code" id="invite-link-display">Generating...</div>
                 <button class="btn" id="copy-invite-link-btn"><span class="btn-text"><i class="fas fa-copy"></i>  Copy My Link</span></button>
             </div>
-            <!-- [NEW] Invited Users Panel -->
+            <!-- [NEW] Earnings Display -->
+            <div class="content-panel">
+                <h3>Your Earnings</h3>
+                 <div class="stats-grid" style="grid-template-columns: 1fr;">
+                     <div class="stat-card">
+                        <div class="label">Total Referral Earnings</div>
+                        <div class="value" id="invite-total-earnings">$0.00</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Invited Users Panel -->
             <div class="content-panel">
                 <h3>Your Referrals</h3>
                 <ul id="invited-users-list" style="list-style-type: none;">
-                    <!-- JS will populate this -->
                     <p class="info-text" id="no-invites-msg">You haven't invited anyone yet.</p>
                 </ul>
             </div>
@@ -574,7 +584,6 @@
             <div class="content-panel">
                 <h3>Transaction History</h3>
                 <ul id="transaction-history-list">
-                    <!-- JS will populate this -->
                     <p class="info-text" id="no-transactions-msg">No transactions yet.</p>
                 </ul>
             </div>
@@ -680,12 +689,34 @@
                 },
                 WITHDRAWAL_FEE_PERCENT: 0.05,
                 MIN_WITHDRAWAL_USD: 5,
-                REFERRAL_BONUS_PERCENT: 0.10,
+                REFERRAL_BONUS_PERCENT: 0.50, // [MODIFIED] 50% bonus
                 PRICE_UPDATE_INTERVAL_HOURS: 24,
                 PRICE_INCREASE_MIN_PERCENT: 0.05, // 5%
                 PRICE_INCREASE_MAX_PERCENT: 0.10, // 10%
                 PRELOADER_TIMEOUT: 8000
             },
+
+            // --- [IMPORTANT] BACKEND LOGIC FOR REFERRAL BONUSES ---
+            // The referral bonus is granted automatically when an admin approves an invited user's FIRST deposit.
+            // This logic CANNOT be securely run on the client-side. It MUST be implemented on a secure backend,
+            // such as a Firebase Cloud Function, which would trigger when a recharge request is approved.
+            //
+            // PSEUDO-CODE FOR THE BACKEND FUNCTION:
+            // 1. Create a Firebase Function that triggers on an update to `/recharge_requests/{pushId}`.
+            // 2. In the function, check if `status` changed from 'pending' to 'approved'.
+            // 3. If it's approved, get the `userId` and `amount` from the request.
+            // 4. Check if this is the user's *first* deposit. You can do this by checking a flag like `hasDeposited: true`
+            //    on their user profile (`/users/{userId}`). If the flag doesn't exist, it's their first deposit.
+            // 5. If it's their first deposit, read the user's `referredBy` code from their profile.
+            // 6. If `referredBy` exists, find the inviter's user ID by querying the `users` node for a `referralCode`
+            //    that matches the `referredBy` code.
+            // 7. If the inviter is found:
+            //    a. Calculate the bonus: `bonusAmount = amount * REFERRAL_BONUS_PERCENT`.
+            //    b. Atomically update the inviter's balance:
+            //       - `usd_balance` += `bonusAmount`
+            //       - `referral_earnings_total` += `bonusAmount`
+            //    c. Add a 'bonus' transaction to the inviter's history.
+            // 8. Finally, set the depositor's `hasDeposited` flag to `true` to prevent future bonuses.
 
             // --- [2] STATE MANAGEMENT ---
             state: {
@@ -696,7 +727,7 @@
                 countdownInterval: null,
                 userRef: null,
                 txRef: null,
-                invitesRef: null, // [NEW] listener for invites
+                invitesRef: null, 
                 preloaderTimeoutId: null,
                 ui: {},
             },
@@ -754,6 +785,7 @@
                     walletUsdBalance: document.getElementById('wallet-usd-balance'),
                     walletOnHoldBalance: document.getElementById('wallet-on-hold-balance'),
                     inviteLinkDisplay: document.getElementById('invite-link-display'),
+                    inviteTotalEarnings: document.getElementById('invite-total-earnings'), // [NEW]
                     profileEmail: document.getElementById('profile-email'),
                     profileUid: document.getElementById('profile-uid'),
                     profileRefCode: document.getElementById('profile-ref-code'),
@@ -761,7 +793,6 @@
                     noTransactionsMsg: document.getElementById('no-transactions-msg'),
                     aiBotStatus: document.getElementById('ai-bot-status'),
                     aiBotCountdown: document.getElementById('ai-bot-countdown'),
-                    // [NEW] Caching invite list elements
                     invitedUsersList: document.getElementById('invited-users-list'),
                     noInvitesMsg: document.getElementById('no-invites-msg'),
                 };
@@ -813,7 +844,7 @@
 
             updateUI(oldData = {}) {
                 if (!this.state.userData) return;
-                const { usd_balance = 0, cdnc_balance = 0, balance_on_hold = 0, email, uid, referralCode } = this.state.userData;
+                const { usd_balance = 0, cdnc_balance = 0, balance_on_hold = 0, referral_earnings_total = 0, email, uid, referralCode } = this.state.userData;
                 const holdingsValue = cdnc_balance * this.state.coinPrice;
 
                 const formatCurrency = (num) => `$${Number(num || 0).toFixed(2)}`;
@@ -828,6 +859,7 @@
                 this.state.ui.homeHoldingsValue.innerText = formatCurrency(holdingsValue);
                 this.state.ui.tradeUsdBalance.innerText = formatCurrency(usd_balance);
                 this.state.ui.inviteLinkDisplay.innerText = `${window.location.origin}${window.location.pathname}?ref=${referralCode}`;
+                this.state.ui.inviteTotalEarnings.textContent = formatCurrency(referral_earnings_total); // [NEW]
                 this.state.ui.profileEmail.textContent = email;
                 this.state.ui.profileUid.textContent = uid;
                 this.state.ui.profileRefCode.textContent = referralCode;
@@ -846,7 +878,7 @@
                     const isPending = tx.details?.status === 'pending';
                     item.className = `transaction-item ${tx.type} ${isPending ? 'pending' : ''}`;
                     const icons = { buy: 'fa-cart-plus', sell: 'fa-hand-holding-dollar', deposit: 'fa-arrow-down', withdrawal: 'fa-paper-plane', bonus: 'fa-gift' };
-                    const amountDisplay = tx.type === 'buy' || tx.type === 'sell' ? `${Number(tx.amount).toFixed(2)} CDNC` : `$${Number(tx.amount).toFixed(2)}`;
+                    const amountDisplay = (tx.type === 'buy' || tx.type === 'sell') ? `${Number(tx.amount).toFixed(2)} CDNC` : `$${Number(tx.amount).toFixed(2)}`;
                     const typeDisplay = isPending ? `${tx.type} (Pending)` : tx.type;
                     
                     item.innerHTML = `
@@ -861,10 +893,9 @@
                 });
             },
 
-            // [NEW] Renders the list of invited users
             updateInvitedUsersList(usersSnapshot) {
                 const { invitedUsersList, noInvitesMsg } = this.state.ui;
-                invitedUsersList.innerHTML = ''; // Clear previous list
+                invitedUsersList.innerHTML = ''; 
                 
                 if (!usersSnapshot.exists() || usersSnapshot.numChildren() === 0) {
                     invitedUsersList.innerHTML = `<p class="info-text" id="no-invites-msg">You haven't invited anyone yet.</p>`;
@@ -875,8 +906,6 @@
                     const userData = userSnap.val();
                     const item = document.createElement('li');
                     item.className = 'invited-user-item';
-
-                    // Mask email for privacy: u**@domain.com
                     const emailParts = userData.email.split('@');
                     const maskedEmail = `${emailParts[0].substring(0, 1)}***@${emailParts[1]}`;
 
@@ -975,6 +1004,8 @@
                         balance_on_hold: 0,
                         referralCode: referralCode, 
                         referredBy: refCode || null,
+                        referral_earnings_total: 0, // [NEW] Initialize earnings
+                        hasDeposited: false // [NEW] Flag for first deposit bonus
                     });
                     
                     this.showToast('Registration successful! You can now log in.', 'success');
@@ -1010,7 +1041,7 @@
                         timestamp: firebase.database.ServerValue.TIMESTAMP
                     });
 
-                    await this.logTransaction('deposit', amount, { network, txId, status: 'pending' });
+                    await this.logTransaction('deposit', amount, { network, txId, status: 'pending', reason: 'Deposit (Pending)' });
                     this.showToast(`Recharge request for $${amount.toFixed(2)} submitted for review!`, 'success');
                     this.state.ui.rechargeForm.reset();
                     this.hideModal('recharge-modal');
@@ -1028,18 +1059,14 @@
                 const address = document.getElementById('withdraw-address').value.trim();
                 const network = document.getElementById('withdraw-network').value;
                 if (isNaN(amount) || amount < this.config.MIN_WITHDRAWAL_USD || !address) return this.showToast('Please fill all fields with valid information.', 'danger');
-
                 if (this.state.userData.usd_balance < amount) return this.showToast(`Insufficient available balance. You need $${amount.toFixed(2)}.`, 'danger');
-
                 this.setButtonLoading(btn, true);
                 const fee = amount * this.config.WITHDRAWAL_FEE_PERCENT;
-
                 try {
                     await this.db.ref('users/' + this.state.currentUser.uid).update({ 
                         usd_balance: firebase.database.ServerValue.increment(-amount),
                         balance_on_hold: firebase.database.ServerValue.increment(amount)
                     });
-
                     await this.db.ref('withdrawal_requests').push({ 
                         userId: this.state.currentUser.uid,
                         userEmail: this.state.currentUser.email,
@@ -1050,8 +1077,7 @@
                         status: 'pending',
                         timestamp: firebase.database.ServerValue.TIMESTAMP
                     });
-
-                    await this.logTransaction('withdrawal', amount, { network, address, fee, status: 'pending' });
+                    await this.logTransaction('withdrawal', amount, { network, address, fee, status: 'pending', reason: 'Withdrawal (Pending)' });
                     this.showToast('Withdrawal request submitted for review!', 'success');
                     this.state.ui.withdrawalForm.reset();
                     this.hideModal('withdrawal-modal');
@@ -1061,9 +1087,7 @@
                         usd_balance: firebase.database.ServerValue.increment(amount),
                         balance_on_hold: firebase.database.ServerValue.increment(-amount)
                     });
-                } finally {
-                    this.setButtonLoading(btn, false);
-                }
+                } finally { this.setButtonLoading(btn, false); }
             },
             
             async triggerPriceUpdate(currentPrice) { const { PRICE_INCREASE_MIN_PERCENT, PRICE_INCREASE_MAX_PERCENT } = this.config; const increasePercent = Math.random() * (PRICE_INCREASE_MAX_PERCENT - PRICE_INCREASE_MIN_PERCENT) + PRICE_INCREASE_MIN_PERCENT; const newPrice = currentPrice * (1 + increasePercent); await this.db.ref('market_data').set({ currentPrice: newPrice, lastUpdate: firebase.database.ServerValue.TIMESTAMP }); this.showToast(`AI Bot Updated Price! New Price: $${newPrice.toFixed(4)}`, 'success'); },
@@ -1081,7 +1105,7 @@
                     this.state.userData = snapshot.val();
                     if (this.state.userData) {
                         this.updateUI(oldUserData);
-                        this.listenToInvites(); // [NEW] Start listening for invites once user data is loaded
+                        this.listenToInvites(); 
                     } else {
                         this.auth.signOut();
                     }
@@ -1090,14 +1114,11 @@
                 this.state.txRef.on('value', (snapshot) => this.updateTransactionHistory(snapshot.val()));
             },
 
-            // [NEW] Listener for invited users
             listenToInvites() {
                 if (this.state.invitesRef) {
-                    this.state.invitesRef.off(); // Detach old listener if it exists
+                    this.state.invitesRef.off(); 
                 }
                 if (!this.state.userData || !this.state.userData.referralCode) return;
-
-                // Query for users whose 'referredBy' field matches the current user's referral code
                 this.state.invitesRef = this.db.ref('users').orderByChild('referredBy').equalTo(this.state.userData.referralCode);
                 this.state.invitesRef.on('value', (snapshot) => {
                     this.updateInvitedUsersList(snapshot);
@@ -1112,13 +1133,13 @@
                 if (this.state.userRef) this.state.userRef.off(); 
                 if (this.state.txRef) this.state.txRef.off(); 
                 if (this.state.marketDataRef) this.state.marketDataRef.off(); 
-                if (this.state.invitesRef) this.state.invitesRef.off(); // [NEW] Stop listening for invites
+                if (this.state.invitesRef) this.state.invitesRef.off(); 
                 if (this.state.countdownInterval) clearInterval(this.state.countdownInterval); 
                 
                 this.state.userRef = null; 
                 this.state.txRef = null; 
                 this.state.marketDataRef = null; 
-                this.state.invitesRef = null; // [NEW] Reset invite listener state
+                this.state.invitesRef = null; 
                 this.state.countdownInterval = null; 
             },
 
