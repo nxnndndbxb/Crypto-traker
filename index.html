@@ -300,16 +300,17 @@
             display: flex; align-items: center; padding: 15px; margin-bottom: 10px;
             background-color: rgba(0,0,0,0.2); border-radius: 12px;
             border-left: 4px solid var(--text-secondary);
+            transition: all 0.3s ease-in-out;
         }
-        .transaction-item.buy, .transaction-item.deposit { border-left-color: var(--success-color); }
+        .transaction-item.buy, .transaction-item.deposit, .transaction-item.deposit-approved { border-left-color: var(--success-color); }
         .transaction-item.sell, .transaction-item.withdrawal { border-left-color: var(--danger-color); }
         .transaction-item.bonus { border-left-color: var(--tertiary-accent); }
-        .transaction-item.pending { border-left-color: var(--warning-color); opacity: 0.8; }
+        .transaction-item.deposit-pending, .transaction-item.withdrawal-pending { border-left-color: var(--warning-color); opacity: 0.8; }
         .transaction-item .icon { font-size: 1.5em; width: 40px; text-align: center; margin-right: 15px; }
-        .transaction-item.buy .icon, .transaction-item.deposit .icon { color: var(--success-color); }
+        .transaction-item.buy .icon, .transaction-item.deposit .icon, .transaction-item.deposit-approved .icon { color: var(--success-color); }
         .transaction-item.sell .icon, .transaction-item.withdrawal .icon { color: var(--danger-color); }
         .transaction-item.bonus .icon { color: var(--tertiary-accent); }
-        .transaction-item.pending .icon { color: var(--warning-color); }
+        .transaction-item.deposit-pending .icon, .transaction-item.withdrawal-pending .icon { color: var(--warning-color); }
         .transaction-item .details { flex-grow: 1; }
         .transaction-item .type { font-weight: 600; text-transform: capitalize; }
         .transaction-item .date { font-size: 0.8em; color: var(--text-secondary); }
@@ -689,35 +690,13 @@
                 },
                 WITHDRAWAL_FEE_PERCENT: 0.05,
                 MIN_WITHDRAWAL_USD: 5,
-                REFERRAL_BONUS_PERCENT: 0.50, // [MODIFIED] 50% bonus
+                REFERRAL_BONUS_PERCENT: 0.50, // 50% bonus
                 PRICE_UPDATE_INTERVAL_HOURS: 24,
                 PRICE_INCREASE_MIN_PERCENT: 0.05, // 5%
                 PRICE_INCREASE_MAX_PERCENT: 0.10, // 10%
                 PRELOADER_TIMEOUT: 8000
             },
-
-            // --- [IMPORTANT] BACKEND LOGIC FOR REFERRAL BONUSES ---
-            // The referral bonus is granted automatically when an admin approves an invited user's FIRST deposit.
-            // This logic CANNOT be securely run on the client-side. It MUST be implemented on a secure backend,
-            // such as a Firebase Cloud Function, which would trigger when a recharge request is approved.
-            //
-            // PSEUDO-CODE FOR THE BACKEND FUNCTION:
-            // 1. Create a Firebase Function that triggers on an update to `/recharge_requests/{pushId}`.
-            // 2. In the function, check if `status` changed from 'pending' to 'approved'.
-            // 3. If it's approved, get the `userId` and `amount` from the request.
-            // 4. Check if this is the user's *first* deposit. You can do this by checking a flag like `hasDeposited: true`
-            //    on their user profile (`/users/{userId}`). If the flag doesn't exist, it's their first deposit.
-            // 5. If it's their first deposit, read the user's `referredBy` code from their profile.
-            // 6. If `referredBy` exists, find the inviter's user ID by querying the `users` node for a `referralCode`
-            //    that matches the `referredBy` code.
-            // 7. If the inviter is found:
-            //    a. Calculate the bonus: `bonusAmount = amount * REFERRAL_BONUS_PERCENT`.
-            //    b. Atomically update the inviter's balance:
-            //       - `usd_balance` += `bonusAmount`
-            //       - `referral_earnings_total` += `bonusAmount`
-            //    c. Add a 'bonus' transaction to the inviter's history.
-            // 8. Finally, set the depositor's `hasDeposited` flag to `true` to prevent future bonuses.
-
+            
             // --- [2] STATE MANAGEMENT ---
             state: {
                 currentUser: null,
@@ -785,7 +764,7 @@
                     walletUsdBalance: document.getElementById('wallet-usd-balance'),
                     walletOnHoldBalance: document.getElementById('wallet-on-hold-balance'),
                     inviteLinkDisplay: document.getElementById('invite-link-display'),
-                    inviteTotalEarnings: document.getElementById('invite-total-earnings'), // [NEW]
+                    inviteTotalEarnings: document.getElementById('invite-total-earnings'),
                     profileEmail: document.getElementById('profile-email'),
                     profileUid: document.getElementById('profile-uid'),
                     profileRefCode: document.getElementById('profile-ref-code'),
@@ -859,7 +838,7 @@
                 this.state.ui.homeHoldingsValue.innerText = formatCurrency(holdingsValue);
                 this.state.ui.tradeUsdBalance.innerText = formatCurrency(usd_balance);
                 this.state.ui.inviteLinkDisplay.innerText = `${window.location.origin}${window.location.pathname}?ref=${referralCode}`;
-                this.state.ui.inviteTotalEarnings.textContent = formatCurrency(referral_earnings_total); // [NEW]
+                this.state.ui.inviteTotalEarnings.textContent = formatCurrency(referral_earnings_total);
                 this.state.ui.profileEmail.textContent = email;
                 this.state.ui.profileUid.textContent = uid;
                 this.state.ui.profileRefCode.textContent = referralCode;
@@ -872,19 +851,29 @@
                     return;
                 }
                 this.state.ui.noTransactionsMsg.style.display = 'none';
-                const sortedTxs = Object.values(transactions).sort((a, b) => b.timestamp - a.timestamp);
-                sortedTxs.forEach(tx => {
+
+                const sortedTxs = Object.entries(transactions).sort((a, b) => b[1].timestamp - a[1].timestamp);
+                
+                sortedTxs.forEach(([key, tx]) => {
                     const item = document.createElement('li');
-                    const isPending = tx.details?.status === 'pending';
-                    item.className = `transaction-item ${tx.type} ${isPending ? 'pending' : ''}`;
+                    
+                    // [MODIFIED] More specific classes for styling based on status
+                    let statusClass = '';
+                    if (tx.details?.status) {
+                        statusClass = `${tx.type}-${tx.details.status}`; // e.g., 'deposit-pending', 'deposit-approved'
+                    } else {
+                        statusClass = tx.type;
+                    }
+                    item.className = `transaction-item ${statusClass}`;
+                    
                     const icons = { buy: 'fa-cart-plus', sell: 'fa-hand-holding-dollar', deposit: 'fa-arrow-down', withdrawal: 'fa-paper-plane', bonus: 'fa-gift' };
                     const amountDisplay = (tx.type === 'buy' || tx.type === 'sell') ? `${Number(tx.amount).toFixed(2)} CDNC` : `$${Number(tx.amount).toFixed(2)}`;
-                    const typeDisplay = isPending ? `${tx.type} (Pending)` : tx.type;
+                    const typeDisplay = tx.details?.reason || tx.type;
                     
                     item.innerHTML = `
                         <div class="icon"><i class="fas ${icons[tx.type] || 'fa-exchange-alt'}"></i></div>
                         <div class="details">
-                            <div class="type">${tx.details?.reason || typeDisplay}</div>
+                            <div class="type">${typeDisplay}</div>
                             <div class="date">${new Date(tx.timestamp).toLocaleString()}</div>
                         </div>
                         <div class="amount">${amountDisplay}</div>
@@ -894,7 +883,7 @@
             },
 
             updateInvitedUsersList(usersSnapshot) {
-                const { invitedUsersList, noInvitesMsg } = this.state.ui;
+                const { invitedUsersList } = this.state.ui;
                 invitedUsersList.innerHTML = ''; 
                 
                 if (!usersSnapshot.exists() || usersSnapshot.numChildren() === 0) {
@@ -1004,8 +993,8 @@
                         balance_on_hold: 0,
                         referralCode: referralCode, 
                         referredBy: refCode || null,
-                        referral_earnings_total: 0, // [NEW] Initialize earnings
-                        hasDeposited: false // [NEW] Flag for first deposit bonus
+                        referral_earnings_total: 0,
+                        hasDeposited: false
                     });
                     
                     this.showToast('Registration successful! You can now log in.', 'success');
@@ -1029,9 +1018,12 @@
                 if (!txId || isNaN(amount) || amount <= 0) return this.showToast('Please provide a valid amount and Transaction ID.', 'danger');
                 this.setButtonLoading(btn, true);
                 const network = document.querySelector('#recharge-modal .option-btn.active').dataset.network;
-                
+
                 try {
-                    await this.db.ref('recharge_requests').push({
+                    const requestRef = this.db.ref('recharge_requests').push();
+                    const requestKey = requestRef.key;
+                    
+                    await requestRef.set({
                         userId: this.state.currentUser.uid,
                         userEmail: this.state.currentUser.email,
                         amount,
@@ -1041,15 +1033,84 @@
                         timestamp: firebase.database.ServerValue.TIMESTAMP
                     });
 
-                    await this.logTransaction('deposit', amount, { network, txId, status: 'pending', reason: 'Deposit (Pending)' });
-                    this.showToast(`Recharge request for $${amount.toFixed(2)} submitted for review!`, 'success');
+                    const txLogRef = await this.logTransaction('deposit', amount, { requestKey, network, txId, status: 'pending', reason: 'Deposit (Pending)' });
+                    
+                    this.showToast(`Recharge for $${amount.toFixed(2)} submitted! Awaiting approval.`, 'success');
                     this.state.ui.rechargeForm.reset();
                     this.hideModal('recharge-modal');
+                    
+                    // --- [EDIT] SIMULATE ADMIN APPROVAL ---
+                    this.simulateApproval(requestKey, txLogRef.key, this.state.currentUser.uid, amount);
+
                 } catch (err) {
                     this.showToast(`Request failed: ${err.message}`, 'danger');
                 } finally {
                     this.setButtonLoading(btn, false);
                 }
+            },
+
+            // --- [NEW] SIMULATED BACKEND APPROVAL LOGIC ---
+            // In a real app, this would be a secure Firebase Cloud Function.
+            simulateApproval(requestKey, txLogKey, userId, amount) {
+                console.log(`Simulating approval for request ${requestKey} in 5 seconds...`);
+
+                setTimeout(async () => {
+                    console.log(`Processing approval for ${userId}...`);
+                    
+                    try {
+                        const userSnapshot = await this.db.ref(`users/${userId}`).once('value');
+                        const depositorData = userSnapshot.val();
+
+                        // 1. Grant the deposited amount to the user
+                        await this.db.ref(`users/${userId}`).update({
+                            usd_balance: firebase.database.ServerValue.increment(amount)
+                        });
+
+                        // 2. Update the transaction log to show "approved"
+                        await this.db.ref(`transactions/${userId}/${txLogKey}/details`).update({
+                            status: 'approved',
+                            reason: 'Deposit (Approved)'
+                        });
+
+                        // 3. Handle Referral Bonus (if it's the first deposit)
+                        if (depositorData.referredBy && !depositorData.hasDeposited) {
+                            console.log(`First deposit by referred user ${userId}. Processing bonus.`);
+                            
+                            // Find the inviter
+                            const inviterQuery = this.db.ref('users').orderByChild('referralCode').equalTo(depositorData.referredBy).limitToFirst(1);
+                            const inviterSnapshot = await inviterQuery.once('value');
+                            
+                            if (inviterSnapshot.exists()) {
+                                const [inviterId, inviterData] = Object.entries(inviterSnapshot.val())[0];
+                                const bonusAmount = amount * this.config.REFERRAL_BONUS_PERCENT;
+
+                                // Grant bonus to inviter
+                                await this.db.ref(`users/${inviterId}`).update({
+                                    usd_balance: firebase.database.ServerValue.increment(bonusAmount),
+                                    referral_earnings_total: firebase.database.ServerValue.increment(bonusAmount)
+                                });
+                                // Log bonus transaction for inviter
+                                await this.logTransaction('bonus', bonusAmount, { fromUser: depositorData.email, reason: 'Referral Bonus' }, inviterId);
+
+                                console.log(`Granted bonus of $${bonusAmount} to inviter ${inviterId}`);
+                                this.showToast(`You received a $${bonusAmount.toFixed(2)} referral bonus!`, 'success');
+                            }
+                        }
+
+                        // 4. Mark this user's first deposit as complete to prevent future bonuses
+                        await this.db.ref(`users/${userId}`).update({ hasDeposited: true });
+
+                        // 5. Update the original request status (optional, but good practice)
+                        await this.db.ref(`recharge_requests/${requestKey}`).update({ status: 'approved' });
+
+                        this.showToast(`Your deposit of $${amount.toFixed(2)} was successfully approved!`, 'success');
+
+                    } catch (error) {
+                        console.error("Error during simulated approval:", error);
+                        this.showToast("An error occurred during deposit approval.", "danger");
+                    }
+
+                }, 5000); // 5-second delay to simulate review time
             },
 
             async handleWithdraw(e) {
@@ -1091,13 +1152,19 @@
             },
             
             async triggerPriceUpdate(currentPrice) { const { PRICE_INCREASE_MIN_PERCENT, PRICE_INCREASE_MAX_PERCENT } = this.config; const increasePercent = Math.random() * (PRICE_INCREASE_MAX_PERCENT - PRICE_INCREASE_MIN_PERCENT) + PRICE_INCREASE_MIN_PERCENT; const newPrice = currentPrice * (1 + increasePercent); await this.db.ref('market_data').set({ currentPrice: newPrice, lastUpdate: firebase.database.ServerValue.TIMESTAMP }); this.showToast(`AI Bot Updated Price! New Price: $${newPrice.toFixed(4)}`, 'success'); },
-            async logTransaction(type, amount, details = {}) { if(!this.state.currentUser) return; const txData = { type, amount, details, timestamp: firebase.database.ServerValue.TIMESTAMP }; await this.db.ref(`transactions/${this.state.currentUser.uid}`).push(txData); },
+            
+            async logTransaction(type, amount, details = {}, forUserId = null) {
+                const userId = forUserId || this.state.currentUser?.uid;
+                if (!userId) return;
+                const txData = { type, amount, details, timestamp: firebase.database.ServerValue.TIMESTAMP };
+                return await this.db.ref(`transactions/${userId}`).push(txData);
+            },
 
             // --- [6] DATA LISTENERS ---
             listenToUserData() {
                 if (!this.state.currentUser || this.state.userRef) return;
                 this.state.userRef = this.db.ref('users/' + this.state.currentUser.uid);
-                this.state.txRef = this.db.ref('transactions/' + this.state.currentUser.uid);
+                this.state.txRef = this.db.ref('transactions/' + this.state.currentUser.uid).orderByChild('timestamp').limitToLast(50);
                 
                 this.state.userRef.on('value', (snapshot) => {
                     this.hidePreloader();
@@ -1115,9 +1182,7 @@
             },
 
             listenToInvites() {
-                if (this.state.invitesRef) {
-                    this.state.invitesRef.off(); 
-                }
+                if (this.state.invitesRef) this.state.invitesRef.off();
                 if (!this.state.userData || !this.state.userData.referralCode) return;
                 this.state.invitesRef = this.db.ref('users').orderByChild('referredBy').equalTo(this.state.userData.referralCode);
                 this.state.invitesRef.on('value', (snapshot) => {
