@@ -542,22 +542,12 @@
         <!-- Invite Page -->
         <section id="invite-page" class="page">
              <div class="content-panel invite-box">
-                <h3>Invite & Earn 50%</h3>
+                <h3>Invite Your Friends</h3>
                 <div class="icon"><i class="fas fa-users-rays"></i></div>
-                <p>Share your unique link. When your friend makes their <strong>first approved deposit</strong>, you'll receive a <strong>50% bonus</strong> of their deposited amount directly into your wallet!</p>
+                <p>Share your unique link to invite friends to join the CDNC Coin platform. Grow the community together!</p>
                 <p class="info-text">Your Invitation Link:</p>
                 <div class="invite-code" id="invite-link-display">Generating...</div>
                 <button class="btn" id="copy-invite-link-btn"><span class="btn-text"><i class="fas fa-copy"></i>  Copy My Link</span></button>
-            </div>
-            <!-- [NEW] Earnings Display -->
-            <div class="content-panel">
-                <h3>Your Earnings</h3>
-                 <div class="stats-grid" style="grid-template-columns: 1fr;">
-                     <div class="stat-card">
-                        <div class="label">Total Referral Earnings</div>
-                        <div class="value" id="invite-total-earnings">$0.00</div>
-                    </div>
-                </div>
             </div>
             <!-- Invited Users Panel -->
             <div class="content-panel">
@@ -690,7 +680,6 @@
                 },
                 WITHDRAWAL_FEE_PERCENT: 0.05,
                 MIN_WITHDRAWAL_USD: 5,
-                REFERRAL_BONUS_PERCENT: 0.50, // 50% bonus
                 PRICE_UPDATE_INTERVAL_HOURS: 24,
                 PRICE_INCREASE_MIN_PERCENT: 0.05, // 5%
                 PRICE_INCREASE_MAX_PERCENT: 0.10, // 10%
@@ -764,7 +753,6 @@
                     walletUsdBalance: document.getElementById('wallet-usd-balance'),
                     walletOnHoldBalance: document.getElementById('wallet-on-hold-balance'),
                     inviteLinkDisplay: document.getElementById('invite-link-display'),
-                    inviteTotalEarnings: document.getElementById('invite-total-earnings'),
                     profileEmail: document.getElementById('profile-email'),
                     profileUid: document.getElementById('profile-uid'),
                     profileRefCode: document.getElementById('profile-ref-code'),
@@ -823,7 +811,7 @@
 
             updateUI(oldData = {}) {
                 if (!this.state.userData) return;
-                const { usd_balance = 0, cdnc_balance = 0, balance_on_hold = 0, referral_earnings_total = 0, email, uid, referralCode } = this.state.userData;
+                const { usd_balance = 0, cdnc_balance = 0, balance_on_hold = 0, email, uid, referralCode } = this.state.userData;
                 const holdingsValue = cdnc_balance * this.state.coinPrice;
 
                 const formatCurrency = (num) => `$${Number(num || 0).toFixed(2)}`;
@@ -838,7 +826,6 @@
                 this.state.ui.homeHoldingsValue.innerText = formatCurrency(holdingsValue);
                 this.state.ui.tradeUsdBalance.innerText = formatCurrency(usd_balance);
                 this.state.ui.inviteLinkDisplay.innerText = `${window.location.origin}${window.location.pathname}?ref=${referralCode}`;
-                this.state.ui.inviteTotalEarnings.textContent = formatCurrency(referral_earnings_total);
                 this.state.ui.profileEmail.textContent = email;
                 this.state.ui.profileUid.textContent = uid;
                 this.state.ui.profileRefCode.textContent = referralCode;
@@ -857,7 +844,6 @@
                 sortedTxs.forEach(([key, tx]) => {
                     const item = document.createElement('li');
                     
-                    // [MODIFIED] More specific classes for styling based on status
                     let statusClass = '';
                     if (tx.details?.status) {
                         statusClass = `${tx.type}-${tx.details.status}`; // e.g., 'deposit-pending', 'deposit-approved'
@@ -993,8 +979,6 @@
                         balance_on_hold: 0,
                         referralCode: referralCode, 
                         referredBy: refCode || null,
-                        referral_earnings_total: 0,
-                        hasDeposited: false
                     });
                     
                     this.showToast('Registration successful! You can now log in.', 'success');
@@ -1039,7 +1023,7 @@
                     this.state.ui.rechargeForm.reset();
                     this.hideModal('recharge-modal');
                     
-                    // --- [EDIT] SIMULATE ADMIN APPROVAL ---
+                    // --- [MODIFIED] SIMULATE ADMIN APPROVAL (NO BONUS) ---
                     this.simulateApproval(requestKey, txLogRef.key, this.state.currentUser.uid, amount);
 
                 } catch (err) {
@@ -1049,7 +1033,7 @@
                 }
             },
 
-            // --- [NEW] SIMULATED BACKEND APPROVAL LOGIC ---
+            // --- [MODIFIED] SIMULATED BACKEND APPROVAL LOGIC (NO BONUS) ---
             // In a real app, this would be a secure Firebase Cloud Function.
             simulateApproval(requestKey, txLogKey, userId, amount) {
                 console.log(`Simulating approval for request ${requestKey} in 5 seconds...`);
@@ -1058,9 +1042,6 @@
                     console.log(`Processing approval for ${userId}...`);
                     
                     try {
-                        const userSnapshot = await this.db.ref(`users/${userId}`).once('value');
-                        const depositorData = userSnapshot.val();
-
                         // 1. Grant the deposited amount to the user
                         await this.db.ref(`users/${userId}`).update({
                             usd_balance: firebase.database.ServerValue.increment(amount)
@@ -1071,36 +1052,10 @@
                             status: 'approved',
                             reason: 'Deposit (Approved)'
                         });
+                        
+                        // [REMOVED] Referral Bonus logic block was here.
 
-                        // 3. Handle Referral Bonus (if it's the first deposit)
-                        if (depositorData.referredBy && !depositorData.hasDeposited) {
-                            console.log(`First deposit by referred user ${userId}. Processing bonus.`);
-                            
-                            // Find the inviter
-                            const inviterQuery = this.db.ref('users').orderByChild('referralCode').equalTo(depositorData.referredBy).limitToFirst(1);
-                            const inviterSnapshot = await inviterQuery.once('value');
-                            
-                            if (inviterSnapshot.exists()) {
-                                const [inviterId, inviterData] = Object.entries(inviterSnapshot.val())[0];
-                                const bonusAmount = amount * this.config.REFERRAL_BONUS_PERCENT;
-
-                                // Grant bonus to inviter
-                                await this.db.ref(`users/${inviterId}`).update({
-                                    usd_balance: firebase.database.ServerValue.increment(bonusAmount),
-                                    referral_earnings_total: firebase.database.ServerValue.increment(bonusAmount)
-                                });
-                                // Log bonus transaction for inviter
-                                await this.logTransaction('bonus', bonusAmount, { fromUser: depositorData.email, reason: 'Referral Bonus' }, inviterId);
-
-                                console.log(`Granted bonus of $${bonusAmount} to inviter ${inviterId}`);
-                                this.showToast(`You received a $${bonusAmount.toFixed(2)} referral bonus!`, 'success');
-                            }
-                        }
-
-                        // 4. Mark this user's first deposit as complete to prevent future bonuses
-                        await this.db.ref(`users/${userId}`).update({ hasDeposited: true });
-
-                        // 5. Update the original request status (optional, but good practice)
+                        // 3. Update the original request status (optional, but good practice)
                         await this.db.ref(`recharge_requests/${requestKey}`).update({ status: 'approved' });
 
                         this.showToast(`Your deposit of $${amount.toFixed(2)} was successfully approved!`, 'success');
