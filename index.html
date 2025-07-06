@@ -302,12 +302,12 @@
             border-left: 4px solid var(--text-secondary);
             transition: all 0.3s ease-in-out;
         }
-        .transaction-item.buy, .transaction-item.deposit, .transaction-item.deposit-approved { border-left-color: var(--success-color); }
+        .transaction-item.buy, .transaction-item.deposit-approved { border-left-color: var(--success-color); }
         .transaction-item.sell, .transaction-item.withdrawal { border-left-color: var(--danger-color); }
         .transaction-item.bonus { border-left-color: var(--tertiary-accent); }
         .transaction-item.deposit-pending, .transaction-item.withdrawal-pending { border-left-color: var(--warning-color); opacity: 0.8; }
         .transaction-item .icon { font-size: 1.5em; width: 40px; text-align: center; margin-right: 15px; }
-        .transaction-item.buy .icon, .transaction-item.deposit .icon, .transaction-item.deposit-approved .icon { color: var(--success-color); }
+        .transaction-item.buy .icon, .transaction-item.deposit-approved .icon { color: var(--success-color); }
         .transaction-item.sell .icon, .transaction-item.withdrawal .icon { color: var(--danger-color); }
         .transaction-item.bonus .icon { color: var(--tertiary-accent); }
         .transaction-item.deposit-pending .icon, .transaction-item.withdrawal-pending .icon { color: var(--warning-color); }
@@ -844,11 +844,9 @@
                 sortedTxs.forEach(([key, tx]) => {
                     const item = document.createElement('li');
                     
-                    let statusClass = '';
-                    if (tx.details?.status) {
-                        statusClass = `${tx.type}-${tx.details.status}`; // e.g., 'deposit-pending', 'deposit-approved'
-                    } else {
-                        statusClass = tx.type;
+                    let statusClass = tx.type;
+                    if (tx.type === 'deposit' || tx.type === 'withdrawal') {
+                         statusClass += `-${tx.details?.status || 'approved'}`; // e.g., 'deposit-pending', 'deposit-approved'
                     }
                     item.className = `transaction-item ${statusClass}`;
                     
@@ -994,6 +992,7 @@
             async handleLogout(e) { const btn = e.currentTarget; this.setButtonLoading(btn, true); try { await this.auth.signOut(); } catch (error) { this.showToast(error.message, 'danger'); } finally { this.setButtonLoading(btn, false); } },
             async handleTrade(type, e) { const btn = e.currentTarget; const amountInput = document.getElementById('trade-amount'); const amount = parseFloat(amountInput.value); if (isNaN(amount) || amount <= 0) { return this.showToast('Please enter a valid positive amount.', 'danger'); } this.setButtonLoading(btn, true); const { usd_balance, cdnc_balance } = this.state.userData; const price = this.state.coinPrice; try { if (type === 'buy') { const cost = amount * price; if (usd_balance < cost) throw new Error('Insufficient USD balance.'); await this.db.ref('users/' + this.state.currentUser.uid).update({ usd_balance: usd_balance - cost, cdnc_balance: cdnc_balance + amount }); await this.logTransaction('buy', amount, { price }); this.showToast(`Successfully bought ${amount.toFixed(2)} CDNC!`, 'success'); } else if (type === 'sell') { if (cdnc_balance < amount) throw new Error('Insufficient CDNC balance.'); const gain = amount * price; await this.db.ref('users/' + this.state.currentUser.uid).update({ usd_balance: usd_balance + gain, cdnc_balance: cdnc_balance - amount }); await this.logTransaction('sell', amount, { price }); this.showToast(`Successfully sold ${amount.toFixed(2)} CDNC!`, 'success'); } amountInput.value = ''; } catch (err) { this.showToast(err.message, 'danger'); } finally { this.setButtonLoading(btn, false); } },
 
+            // --- [MODIFIED] RECHARGE SYSTEM ---
             async handleRecharge(e) {
                 e.preventDefault();
                 const btn = e.currentTarget.querySelector('button');
@@ -1004,9 +1003,8 @@
                 const network = document.querySelector('#recharge-modal .option-btn.active').dataset.network;
 
                 try {
+                    // 1. Create the main recharge request for admins to see
                     const requestRef = this.db.ref('recharge_requests').push();
-                    const requestKey = requestRef.key;
-                    
                     await requestRef.set({
                         userId: this.state.currentUser.uid,
                         userEmail: this.state.currentUser.email,
@@ -1017,14 +1015,21 @@
                         timestamp: firebase.database.ServerValue.TIMESTAMP
                     });
 
-                    const txLogRef = await this.logTransaction('deposit', amount, { requestKey, network, txId, status: 'pending', reason: 'Deposit (Pending)' });
+                    // 2. Log the transaction in the user's history as 'pending'
+                    const txLogRef = await this.logTransaction('deposit', amount, {
+                        requestKey: requestRef.key,
+                        network,
+                        txId,
+                        status: 'pending',
+                        reason: 'Deposit (Pending)'
+                    });
                     
                     this.showToast(`Recharge for $${amount.toFixed(2)} submitted! Awaiting approval.`, 'success');
                     this.state.ui.rechargeForm.reset();
                     this.hideModal('recharge-modal');
                     
-                    // --- [MODIFIED] SIMULATE ADMIN APPROVAL (NO BONUS) ---
-                    this.simulateApproval(requestKey, txLogRef.key, this.state.currentUser.uid, amount);
+                    // 3. Simulate the admin approval process
+                    this.simulateApproval(requestRef.key, txLogRef.key, this.state.currentUser.uid, amount);
 
                 } catch (err) {
                     this.showToast(`Request failed: ${err.message}`, 'danger');
@@ -1033,38 +1038,34 @@
                 }
             },
 
-            // --- [MODIFIED] SIMULATED BACKEND APPROVAL LOGIC (NO BONUS) ---
-            // In a real app, this would be a secure Firebase Cloud Function.
+            // --- [MODIFIED] SIMULATED ADMIN APPROVAL ---
+            // In a real app, this logic would live in a secure backend environment (e.g., Firebase Cloud Function).
             simulateApproval(requestKey, txLogKey, userId, amount) {
-                console.log(`Simulating approval for request ${requestKey} in 5 seconds...`);
+                console.log(`Simulating admin approval for request ${requestKey}. This will process in 5 seconds.`);
 
                 setTimeout(async () => {
-                    console.log(`Processing approval for ${userId}...`);
-                    
                     try {
-                        // 1. Grant the deposited amount to the user
+                        // 1. **CRITICAL:** Update the user's balance ONLY upon approval.
                         await this.db.ref(`users/${userId}`).update({
                             usd_balance: firebase.database.ServerValue.increment(amount)
                         });
 
-                        // 2. Update the transaction log to show "approved"
+                        // 2. Update the user's transaction log to show "approved"
                         await this.db.ref(`transactions/${userId}/${txLogKey}/details`).update({
                             status: 'approved',
                             reason: 'Deposit (Approved)'
                         });
                         
-                        // [REMOVED] Referral Bonus logic block was here.
-
-                        // 3. Update the original request status (optional, but good practice)
+                        // 3. Update the original request status for admin tracking
                         await this.db.ref(`recharge_requests/${requestKey}`).update({ status: 'approved' });
 
-                        this.showToast(`Your deposit of $${amount.toFixed(2)} was successfully approved!`, 'success');
+                        this.showToast(`Your deposit of $${amount.toFixed(2)} was successfully approved and credited!`, 'success');
 
                     } catch (error) {
                         console.error("Error during simulated approval:", error);
+                        // In a real scenario, you would need robust error handling here.
                         this.showToast("An error occurred during deposit approval.", "danger");
                     }
-
                 }, 5000); // 5-second delay to simulate review time
             },
 
@@ -1099,6 +1100,7 @@
                     this.hideModal('withdrawal-modal');
                 } catch (err) {
                     this.showToast(`Withdrawal failed: ${err.message}`, 'danger');
+                    // Revert the balance change if the request fails
                     await this.db.ref('users/' + this.state.currentUser.uid).update({ 
                         usd_balance: firebase.database.ServerValue.increment(amount),
                         balance_on_hold: firebase.database.ServerValue.increment(-amount)
@@ -1110,8 +1112,9 @@
             
             async logTransaction(type, amount, details = {}, forUserId = null) {
                 const userId = forUserId || this.state.currentUser?.uid;
-                if (!userId) return;
+                if (!userId) return null;
                 const txData = { type, amount, details, timestamp: firebase.database.ServerValue.TIMESTAMP };
+                // Return the reference so we can get the key
                 return await this.db.ref(`transactions/${userId}`).push(txData);
             },
 
